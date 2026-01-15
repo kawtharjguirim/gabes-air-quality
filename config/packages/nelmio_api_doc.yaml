@@ -1,0 +1,23 @@
+nelmio_api_doc:
+    documentation:
+        info:
+            title: Air Quality Prediction API
+            description: API for Gabès, Tunisia Air Quality Monitoring and Prediction System
+            version: 1.0.0
+        components:
+            securitySchemes:
+                Bearer:
+                    type: http
+                    scheme: bearer
+                    bearerFormat: JWT
+        security:
+            - Bearer: []
+    areas:
+        default:
+            path_patterns:
+                - ^/api(?!/doc)
+    media_types:
+        - json
+        - html
+    html_config:
+        assets_mode: cdn
