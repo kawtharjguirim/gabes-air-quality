@@ -1,151 +1,130 @@
-# app.py
 import streamlit as st
 import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-import joblib
-from tensorflow.keras.models import load_model
+import plotly.express as px
 import folium
-from streamlit_folium import folium_static
-import plotly.graph_objects as go
+from streamlit_folium import st_folium
+from datetime import datetime, timedelta
 
-# -----------------------------
-# Configuration
-# -----------------------------
-st.set_page_config(page_title="🌿 AlertAir – Gabès", layout="wide")
-st.title("🌿 Système d’Alerte Sanitaire – Qualité de l’Air à Gabès")
+# === CONFIGURATION DE LA PAGE ===
+st.set_page_config(
+    page_title="Pollution Air - Gabès",
+    page_icon="🌍",
+    layout="wide"
+)
 
-# Seuils OMS adaptés (µg/m³)
-SO2_ALERT_YELLOW = 100
-SO2_ALERT_RED = 250
+# === TITRE ===
+st.title("📊 Tableau de Bord : Prédiction de la Pollution de l'Air à Gabès")
+st.markdown("Système de prédiction en temps réel des concentrations de SO₂ et NH₃")
 
-# -----------------------------
-# 1. CHARGEMENT DES DONNÉES RÉCENTES (simulées à partir du CSV fourni)
-# -----------------------------
-@st.cache_data
-def load_recent_data():
-    df = pd.read_csv("gabes_air_quality_synthetic(1).csv")
-    df = df.rename(columns={
-        'datetime': 'timestamp',
-        'temperature_C': 'temp',
-        'humidity_%': 'humidity',
-        'wind_speed_m_s': 'wind_speed',
-        'wind_dir_deg': 'wind_dir',
-        'pressure_hPa': 'pressure',
-        'precip_mm': 'precip',
-        'SO2_ug_m3': 'so2', # Renommé pour le tracé
-        'NH3_ug_m3': 'nh3'  # Renommé pour le tracé
-    })
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.sort_values("timestamp").reset_index(drop=True)
-    return df
+# === DONNÉES MOCKÉES (à remplacer plus tard par vraies prédictions) ===
+# Heures futures
+future_hours = [f"H+{i}" for i in range(1, 7)]
+so2_pred = [18, 25, 40, 60, 85, 110]  # µg/m³
+nh3_pred = [8, 12, 18, 22, 28, 35]    # µg/m³
 
-df = load_recent_data()
-last_6_rows = df.tail(6).copy()
+df_future = pd.DataFrame({
+    "Heure": future_hours,
+    "SO₂ (µg/m³)": so2_pred,
+    "NH₃ (µg/m³)": nh3_pred
+})
 
-# -----------------------------
-# 2. CHARGEMENT DU MODÈLE ET DU SCALER
-# -----------------------------
-try:
-    model = load_model("best_model_so2_3h_lstm.h5", compile=False)
-    # Re-compile the model with the original optimizer and loss
-    # Assuming learning_rate=0.001 and loss='mse' were used during training
-    from tensorflow.keras.optimizers import Adam
-    from tensorflow.keras.losses import MeanSquaredError
-    model.compile(optimizer=Adam(learning_rate=0.001), loss=MeanSquaredError())
-    scaler = joblib.load("scaler_so2_3h.pkl")
-except FileNotFoundError:
-    st.error("⚠️ Modèle ou scaler non trouvé. Veuillez exécuter d'abord le script de comparaison.")
-    st.stop()
+# Données historiques (dernières 10h)
+now = datetime.now()
+dates_hist = [now - timedelta(hours=i) for i in range(10)][::-1]
+pred_so2_hist = [20, 22, 25, 30, 35, 40, 50, 60, 75, 85]
+real_so2_hist = [21, 23, 27, 32, 38, 42, 52, 65, 80, 90]
 
-# Colonnes utilisées pour la prédiction (doivent correspondre à l'entraînement)
-feature_cols = [
-    "temp", "humidity", "wind_speed", "wind_dir", "pressure", "precip",
-    "hour", "dayofweek", "is_weekend",
-    "SO2_lag1", "SO2_lag2", "NH3_lag1", "NH3_lag2",
-    "industrial_index", "traffic_index"
-]
+df_hist = pd.DataFrame({
+    "Date": dates_hist,
+    "Prédiction SO₂": pred_so2_hist,
+    "Réalité SO₂": real_so2_hist
+})
 
-# Préparer les données pour la prédiction
-X_last = last_6_rows[feature_cols].values
-X_scaled = scaler.transform(X_last)
-X_seq = X_scaled.reshape(1, 6, len(feature_cols))
+# Niveau d'alerte actuel (basé sur dernière prédiction)
+current_so2 = so2_pred[0]  # H+1
+if current_so2 < 20:
+    alert = ("🟢 Vert", "green")
+elif current_so2 < 50:
+    alert = ("🟡 Jaune", "yellow")
+elif current_so2 < 100:
+    alert = ("🟠 Orange", "orange")
+else:
+    alert = ("🔴 Rouge", "red")
 
-# Prédire
-prediction = model.predict(X_seq)[0][0]
+# === SECTION 1 : CARTE DE GABÈS ===
+st.header("📍 Carte Interactive de Gabès")
+m = folium.Map(location=[33.8833, 10.1000], zoom_start=11)
 
-# -----------------------------
-# 3. INTERFACE UTILISATEUR
-# -----------------------------
+# Zones critiques (exemples basés sur le complexe chimique)
+folium.Marker(
+    [33.8750, 10.0900],
+    popup="Complexe Chimique - Zone Industrielle",
+    icon=folium.Icon(color="red", icon="industry", prefix="fa")
+).add_to(m)
 
-# Sidebar : carte de Gabès
-with st.sidebar:
-    st.subheader("📍 Localisation")
-    m = folium.Map(location=[33.88, 10.11], zoom_start=11)
-    folium.Marker(
-        [33.88, 10.11],
-        popup="Gabès – Zone industrielle (GCT)",
-        tooltip="Pollution industrielle",
-        icon=folium.Icon(color="red", icon="info-sign")
-    ).add_to(m)
-    folium_static(m)
+folium.Marker(
+    [33.8900, 10.1100],
+    popup="Zone Résidentielle Nord",
+    icon=folium.Icon(color="blue", icon="home", prefix="fa")
+).add_to(m)
 
-    st.markdown("---")
-    st.write("**Dernière mise à jour**")
-    st.write(f"{df['timestamp'].iloc[-1].strftime('%Y-%m-%d %H:%M')}")
+folium.Circle(
+    location=[33.8750, 10.0900],
+    radius=1500,
+    color="red",
+    fill=True,
+    fillColor="red",
+    fillOpacity=0.1
+).add_to(m)
 
-# Alertes sanitaires
-st.subheader("🚨 Alerte Sanitaire (SO₂)")
-col1, col2 = st.columns([1, 2])
-with col1:
-    if prediction >= SO2_ALERT_RED:
-        st.error(f"🔴 **ALERTE SANITAIRE**\n\nSO₂ prévu à **{prediction:.1f} µg/m³** dans 3h")
-    elif prediction >= SO2_ALERT_YELLOW:
-        st.warning(f"🟠 **Vigilance accrue**\n\nSO₂ prévu à **{prediction:.1f} µg/m³** dans 3h")
-    else:
-        st.success(f"🟢 **Qualité de l’air normale**\n\nSO₂ prévu à **{prediction:.1f} µg/m³** dans 3h")
+st_folium(m, width=800, height=500)
 
-with col2:
-    # Légende seuils
+# === SECTION 2 : PRÉDICTIONS 6H ===
+st.header("📈 Prédictions des 6 Prochaines Heures")
+fig_pred = px.line(
+    df_future,
+    x="Heure",
+    y=["SO₂ (µg/m³)", "NH₃ (µg/m³)"],
+    title="Concentrations prédites (SO₂ et NH₃)",
+    markers=True
+)
+fig_pred.update_layout(yaxis_title="Concentration (µg/m³)")
+st.plotly_chart(fig_pred, use_container_width=True)
+
+# === SECTION 3 : NIVEAU D'ALERTE ACTUEL ===
+st.header("🚨 Niveau d'Alerte Actuel")
+st.markdown(f"### {alert[0]}")
+st.markdown(
+    f"<div style='background-color:{alert[1]}; padding:15px; border-radius:10px; text-align:center; color:black;'>"
+    f"<b>Concentration SO₂ estimée dans 1h : {current_so2} µg/m³</b>"
+    "</div>",
+    unsafe_allow_html=True
+)
+
+# === SECTION 4 : HISTORIQUE PRÉDICTIONS VS RÉALITÉ ===
+st.header("📉 Historique : Prédictions vs Réalité (Dernières 10h)")
+fig_hist = px.line(
+    df_hist,
+    x="Date",
+    y=["Prédiction SO₂", "Réalité SO₂"],
+    title="Comparaison des valeurs prédites et réelles",
+    markers=True
+)
+fig_hist.update_layout(yaxis_title="SO₂ (µg/m³)")
+st.plotly_chart(fig_hist, use_container_width=True)
+
+# === SECTION 5 : SIMULATION D'ALERTE ===
+st.header("⚙️ Simulation d'Alerte Sanitaire")
+if st.button("⚠️ Simuler une alerte rouge (SO₂ > 100 µg/m³)"):
+    st.error("🚨 ALERTE SANITAIRE ROUGE !")
     st.markdown("""
-    **Seuils de référence (OMS adaptés)** :
-    - 🟢 Normal : < 100 µg/m³
-    - 🟠 Vigilance : ≥ 100 µg/m³
-    - 🔴 Alerte : ≥ 250 µg/m³
+    **Mesures recommandées :**
+    - Fermer portes et fenêtres
+    - Éviter les activités extérieures
+    - Personnes sensibles : rester à l'intérieur
+    - Autorités locales informées automatiquement
     """)
 
-# Graphique historique + prévision
-st.subheader("📊 Évolution du SO₂ (observé et prévu)")
-
-# Données pour le graphique
-plot_df = df.tail(24).copy()  # dernières 24h
-future_time = plot_df["timestamp"].iloc[-1] + timedelta(hours=3)
-plot_df = pd.concat([
-    plot_df[["timestamp", "so2"]],
-    pd.DataFrame({"timestamp": [future_time], "so2": [np.nan]})
-], ignore_index=True)
-
-fig = go.Figure()
-fig.add_trace(go.Scatter(
-    x=plot_df["timestamp"][:-1],
-    y=plot_df["so2"][:-1],
-    mode='lines+markers',
-    name="Observé (dernières 24h)",
-    line=dict(color='blue')
-))
-fig.add_trace(go.Scatter(
-    x=[future_time],
-    y=[prediction],
-    mode='markers',
-    name="Prédit (dans 3h)",
-    marker=dict(color='red', size=10)
-))
-fig.update_layout(
-    xaxis_title="Heure",
-    yaxis_title="SO₂ (µg/m³)",
-    hovermode="x unified"
-)
-st.plotly_chart(fig, width='stretch')
-
-# Informations supplémentaires
-st.info("ℹ️ Ce système est en phase de démonstration. Les alertes ne sont pas envoyées réellement (conformément au cahier des charges).")
+# === FOOTER ===
+st.markdown("---")
+st.caption("Projet réalisé dans le cadre du système de prédiction de pollution de l'air à Gabès • Données simulées à titre de démonstration")
